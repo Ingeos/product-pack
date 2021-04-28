@@ -9,8 +9,21 @@ class TestSaleProductPack(SavepointCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        cls.pricelist = cls.env["product.pricelist"].create({
+            "name": "Test pricelist",
+            "currency_id": cls.env.user.company_id.currency_id.id,
+            "item_ids": [(0, 0, {
+                "applied_on": "3_global",
+                "compute_price": "formula",
+                "base": "list_price",
+            })]
+        })
+        cls.partner = cls.env["res.partner"].create({
+            "name": "Mr. Odoo",
+            "property_product_pricelist": cls.pricelist.id,
+        })
         cls.sale_order = cls.env['sale.order'].create({
-            'partner_id': cls.env.ref('base.res_partner_12').id,
+            'partner_id': cls.partner.id,
         })
 
     def _get_component_prices_sum(self, product_pack):
@@ -101,3 +114,32 @@ class TestSaleProductPack(SavepointCase):
         # Pack price is equal to the sum of component prices
         self.assertEqual(line.price_subtotal, 2662.5)
         self.assertEqual(self._get_component_prices_sum(product_ndtp), 2662.5)
+
+    def test_update_qty(self):
+        # Ensure the quantities are always updated
+
+        def qty_in_order():
+            return sum(self.sale_order.order_line.mapped('product_uom_qty'))
+
+        product_cp = self.env.ref(
+            'product_pack.product_pack_cpu_detailed_components')
+        main_sol = self.env['sale.order.line'].create({
+            'order_id': self.sale_order.id,
+            'name': product_cp.name,
+            'product_id': product_cp.id,
+            'product_uom_qty': 1,
+        })
+        total_qty_init = qty_in_order()
+        # change qty of main sol
+        main_sol.product_uom_qty = 2 * main_sol.product_uom_qty
+        total_qty_updated = qty_in_order()
+        # Ensure all quantities have doubled
+        self.assertEqual(total_qty_init * 2, total_qty_updated)
+
+        # Confirm the sale
+        self.sale_order.action_confirm()
+
+        # Ensure we can still update the quantity
+        main_sol.product_uom_qty = 2 * main_sol.product_uom_qty
+        total_qty_confirmed = qty_in_order()
+        self.assertEqual(total_qty_updated * 2, total_qty_confirmed)
